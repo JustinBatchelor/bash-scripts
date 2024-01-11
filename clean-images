@@ -1,0 +1,12 @@
+#!/bin/sh
+
+remove=$(podman images | grep '<none>' | awk '{print $3}')
+
+podman images
+
+for s in ${remove}
+do
+	podman rmi ${s}
+done
+
+podman images
