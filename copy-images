@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# Initialize an array to store image details (ID and repository:tag)
+declare -a image_details
+
+# Fetch the list of local images using podman, including the ID
+while IFS= read -r line; do
+    image_details+=("$line")
+done < <(podman images --format "{{.ID}} {{.Repository}}:{{.Tag}}")
+
+# Check if there are any images
+if [ ${#image_details[@]} -eq 0 ]; then
+    echo "No images found."
+    exit 1
+fi
+
+# Prompt for quay.io login credentials
+echo "Please enter your quay.io username:"
+read username
+echo "Please enter your quay.io token (input will be hidden):"
+read -s token
+podman login -u "$username" -p "$token" quay.io
+
+# Ask for the destination repository
+echo "Enter the destination repository on quay.io (e.g., quay.io/base_repo) (Note: don't add trailing /):"
+read destination_repository
+
+# Display the images to the user, showing only the repository and tag
+echo "Available images:"
+for i in "${!image_details[@]}"; do
+    # Extracting and displaying only the repository:tag part for user selection
+    repo_tag=$(echo "${image_details[$i]}" | awk '{print $2 ":" $3}')
+    echo "$((i+1))) ${repo_tag}"
+done
+echo "Enter 'all' to select all images."
+
+# Ask the user to select images by number or 'all'
+echo "Enter the numbers of the images you want to copy, separated by spaces, or 'all' for all images:"
+read -r selection_input
+
+# Determine if 'all' was selected
+if [[ "$selection_input" == "all" ]]; then
+    selections=($(seq 1 ${#image_details[@]}))
+else
+    read -a selections <<< "$selection_input"
+fi
+
+# Validate the input
+for sel in "${selections[@]}"; do
+    if ! [[ $sel =~ ^[0-9]+$ ]] || [ $sel -lt 1 ] || [ $sel -gt ${#image_details[@]} ]; then
+        echo "Invalid selection: $sel"
+        exit 2
+    fi
+done
+
+# Copy the selected images to the specified quay repository using podman push, referencing by image ID
+for sel in "${selections[@]}"; do
+    # Calculate array index
+    index=$((sel-1))
+    # Extract the ID and repo:tag for the selected image
+    image_id=$(echo "${image_details[$index]}" | awk '{print $1}')
+    repo_tag=$(echo "${image_details[$index]}" | awk '{print $2 ":" $3}')
+    destination="${destination_repository}/${repo_tag##*/}"
+
+    echo "Copying ${repo_tag} (ID: ${image_id}) to ${destination}..."
+    # Pushing using the image ID
+    destination_image="${destination%?}"
+    echo "podman push ${image_id} ${destination_image}"
+    podman push "${image_id}" "${destination_image}"
+done
+
+echo "Copy operation completed."
+
